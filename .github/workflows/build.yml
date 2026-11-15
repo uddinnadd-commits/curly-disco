@@ -27,13 +27,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Locate the Gradle project (works at repo root or in a subfolder)
+      - name: Locate the Gradle project (repo root, a subfolder, or an un-extracted zip)
         id: locate
         shell: bash
         run: |
-          f=$(find . -maxdepth 4 \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -not -path './.git/*' | head -n 1)
+          find_settings() {
+            find . -maxdepth 5 \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -not -path './.git/*' | head -n 1
+          }
+          f=$(find_settings)
           if [ -z "$f" ]; then
-            echo "No settings.gradle found anywhere. Repo contents:"
+            echo "No settings.gradle found. Looking for zip files to extract..."
+            i=0
+            while IFS= read -r z; do
+              i=$((i+1))
+              echo "Extracting $z"
+              unzip -o -q "$z" -d "_unzipped_$i" || true
+            done < <(find . -maxdepth 4 -name '*.zip' -not -path './.git/*' -not -path './_unzipped_*')
+            f=$(find_settings)
+          fi
+          if [ -z "$f" ]; then
+            echo "Still no settings.gradle. Repo contents:"
             find . -maxdepth 3 -not -path './.git/*' | head -100
             echo "dir=." >> "$GITHUB_OUTPUT"
           else
