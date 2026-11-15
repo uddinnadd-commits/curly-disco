@@ -1,0 +1,82 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Don't pile up runs on rapid pushes
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Pinned image: not "ubuntu-latest", so a new Ubuntu release never changes your build.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # The run stays green even if the build step fails.
+    continue-on-error: true
+
+    env:
+      # No apt-get / OS package updates anywhere in this workflow; we only use what the runner image ships.
+      DEBIAN_FRONTEND: noninteractive
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.warning.mode=none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25 (pinned, no auto-upgrade)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          check-latest: false
+
+      - name: Set up Gradle 9.5.1 (pinned)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Build (errors are ignored; log is saved)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          gradle build --no-daemon --continue --stacktrace 2>&1 | tee build.log
+          echo "gradle exit code: ${PIPESTATUS[0]}"
+          exit 0
+
+      - name: Show compile errors in the run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Build result"
+            if ls build/libs/*.jar >/dev/null 2>&1; then
+              echo "Jar built: $(ls build/libs/*.jar | xargs -n1 basename | tr '\n' ' ')"
+            else
+              echo "No jar was produced (compile errors below)."
+            fi
+            echo
+            echo '```'
+            grep -E "error:|\.java:[0-9]+|FAILED|What went wrong" build.log | head -80 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload jar
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: realistificator-jar
+          path: build/libs/*.jar
+          if-no-files-found: ignore
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
